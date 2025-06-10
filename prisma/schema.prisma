@@ -1,0 +1,303 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mongodb"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id        String   @id @default(auto()) @map("_id") @db.ObjectId
+  email     String   @unique
+  password  String
+  role      UserRole @default(CUSTOMER)
+  
+  // Basic user info
+  firstName String?
+  lastName  String?
+  name      String? // Legacy field, can be computed from firstName + lastName
+  phone     String?
+  address   String?
+  
+  // Shopify-specific fields
+  shopifyCustomerId String?
+  acceptsMarketing  Boolean @default(false)
+  totalSpent        Float   @default(0)
+  orderCount        Int     @default(0)
+  customerTags      String?
+  customerNote      String?
+  verifiedEmail     Boolean @default(false)
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  orders Order[]
+  cart   Cart?
+
+  @@map("users")
+}
+
+model Product {
+  id          String   @id @default(auto()) @map("_id") @db.ObjectId
+  
+  // Basic Shopify fields
+  handle      String   @unique  // Shopify handle
+  title       String            // Product title
+  bodyHtml    String?           // Product description HTML
+  vendor      String?           // Product vendor
+  productType String?           // Product type
+  tags        String[]          // Array of tags
+  published   Boolean  @default(true)
+  
+  // Shopify system fields
+  shopifyId   String?  // Original Shopify ID for sync (removed @unique temporarily for migration)
+  
+  // SEO fields
+  seoTitle       String?
+  seoDescription String?
+  
+  // Basic pricing (for simple products)
+  price       Float?
+  compareAtPrice Float?
+  costPerItem Float?
+  
+  // Legacy fields (keeping for compatibility)
+  name        String?  // Can be mapped from title
+  description String?  // Can be mapped from bodyHtml
+  imageUrl    String?  // Can be mapped from first image
+  
+  // Status and inventory
+  status      ProductStatus @default(ACTIVE)
+  stock       Int      @default(0)
+  categoryId  String?  @db.ObjectId
+  isActive    Boolean  @default(true)
+  
+  // Timestamps
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relations
+  category    Category?       @relation(fields: [categoryId], references: [id], onUpdate: NoAction)
+  variants    ProductVariant[]
+  images      ProductImage[]
+  metafields  ProductMetafield[]
+  cartItems   CartItem[]
+  orderItems  OrderItem[]
+
+  @@map("products")
+}
+
+model Category {
+  id              String   @id @default(auto()) @map("_id") @db.ObjectId
+  name            String   @unique
+  slug            String   @unique
+  shopifyCategory String?  // Original Shopify category path
+  parentId        String?  @db.ObjectId
+  level           Int      @default(0)
+  
+  // Timestamps
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  // Relations
+  parent          Category? @relation("CategoryHierarchy", fields: [parentId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  children        Category[] @relation("CategoryHierarchy")
+  products        Product[]
+
+  @@map("categories")
+}
+
+model Cart {
+  id     String @id @default(auto()) @map("_id") @db.ObjectId
+  userId String @unique @db.ObjectId
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // Relations
+  items CartItem[]
+
+  @@map("carts")
+}
+
+model CartItem {
+  id        String @id @default(auto()) @map("_id") @db.ObjectId
+  cartId    String @db.ObjectId
+  productId String @db.ObjectId
+  quantity  Int    @default(1)
+
+  // Relations
+  cart    Cart    @relation(fields: [cartId], references: [id], onDelete: Cascade)
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@unique([cartId, productId])
+  @@map("cart_items")
+}
+
+model Order {
+  id          String      @id @default(auto()) @map("_id") @db.ObjectId
+  userId      String?     @db.ObjectId
+  customerEmail String?   // For orders without user accounts
+  status      OrderStatus @default(PENDING)
+  totalAmount Float
+  paymentId   String?
+  
+  // Shopify-specific fields
+  shopifyOrderId    String? // @unique (removed temporarily for migration)
+  shopifyOrderName  String? // e.g., "#1001"
+  financialStatus   String? // pending, paid, partially_paid, refunded, voided
+  fulfillmentStatus String? // fulfilled, partial, unfulfilled, restocked
+  currency          String  @default("USD")
+  subtotalPrice     Float?
+  totalTax          Float?
+  shippingPrice     Float?
+  totalDiscounts    Float?
+  orderTags         String?
+  orderNote         String?
+  
+  // Address information
+  billingAddress    String?
+  shippingAddress   String?
+  
+  // Legacy field for compatibility
+  total             Float   @default(0)
+  
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  // Relations
+  user  User?       @relation(fields: [userId], references: [id])
+  items OrderItem[]
+
+  @@map("orders")
+}
+
+model OrderItem {
+  id          String  @id @default(auto()) @map("_id") @db.ObjectId
+  orderId     String  @db.ObjectId
+  productId   String? @db.ObjectId
+  productName String  // Store product name for historical data
+  quantity    Int
+  price       Float
+  
+  // Shopify-specific fields
+  shopifyVariantId  String?
+  shopifyProductId  String?
+  sku               String?
+
+  // Relations
+  order   Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  product Product? @relation(fields: [productId], references: [id], onUpdate: NoAction)
+
+  @@map("order_items")
+}
+
+// Enums
+enum UserRole {
+  CUSTOMER
+  ADMIN
+}
+
+enum OrderStatus {
+  PENDING
+  CONFIRMED
+  PROCESSING
+  SHIPPED
+  DELIVERED
+  CANCELLED
+}
+
+enum ProductStatus {
+  ACTIVE
+  DRAFT
+  ARCHIVED
+}
+
+model ProductVariant {
+  id              String   @id @default(auto()) @map("_id") @db.ObjectId
+  productId       String   @db.ObjectId
+  
+  // Variant details
+  title           String   // e.g., "Black / Small"
+  sku             String?
+  barcode         String?
+  price           Float
+  compareAtPrice  Float?
+  costPerItem     Float?
+  
+  // Inventory
+  inventoryQty    Int      @default(0)
+  inventoryPolicy String   @default("continue") // continue, deny
+  fulfillmentService String @default("manual")
+  
+  // Physical properties
+  weight          Float?
+  weightUnit      String   @default("kg")
+  requiresShipping Boolean @default(true)
+  taxable         Boolean @default(true)
+  
+  // Variant options (e.g., color: black, size: M)
+  option1Name     String?
+  option1Value    String?
+  option2Name     String?
+  option2Value    String?
+  option3Name     String?
+  option3Value    String?
+  
+  // Shopify sync
+  shopifyVariantId String? // @unique (removed temporarily for migration)
+  
+  // Timestamps
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  // Relations
+  product         Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+  image           ProductImage? @relation(fields: [imageId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  imageId         String? @db.ObjectId
+
+  @@map("product_variants")
+}
+
+model ProductImage {
+  id          String   @id @default(auto()) @map("_id") @db.ObjectId
+  productId   String   @db.ObjectId
+  src         String   // Image URL
+  altText     String?
+  position    Int      @default(1)
+  
+  // Shopify sync
+  shopifyImageId String? // @unique (removed temporarily for migration)
+  
+  // Timestamps
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relations
+  product     Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+  variants    ProductVariant[]
+
+  @@map("product_images")
+}
+
+model ProductMetafield {
+  id          String   @id @default(auto()) @map("_id") @db.ObjectId
+  productId   String   @db.ObjectId
+  namespace   String   // e.g., "shopify", "custom"
+  key         String   // e.g., "color-pattern"
+  value       String   // JSON string for complex values
+  type        String   @default("string") // string, integer, json, etc.
+  
+  // Timestamps
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relations
+  product     Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@unique([productId, namespace, key])
+  @@map("product_metafields")
+} 
