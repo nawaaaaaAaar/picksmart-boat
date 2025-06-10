@@ -90,7 +90,7 @@ export class MigrationValidator {
     console.log('=====================================');
     console.log('1. 🌐 Set up Shopify webhooks:');
     console.log('   • Go to Shopify Admin → Settings → Notifications');
-    console.log('   • Add webhook: https://yourdomain.com/api/webhooks/shopify');
+    console.log('   • Add webhook: https://www.picksmartstores.com/api/webhooks/shopify');
     console.log('   • Events: products/*, orders/*, customers/*');
     console.log('   • Set SHOPIFY_WEBHOOK_SECRET in .env');
     

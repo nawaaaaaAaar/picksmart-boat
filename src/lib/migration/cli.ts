@@ -198,7 +198,7 @@ Expected Files:
   
 🔄 Real-time Sync (Webhooks):
   Setup webhooks in Shopify Admin → Settings → Notifications
-  Endpoint: https://yourdomain.com/api/webhooks/shopify
+  Endpoint: https://www.picksmartstores.com/api/webhooks/shopify
   Events: products/*, orders/*, customers/*
   `);
 }
