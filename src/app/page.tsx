@@ -6,7 +6,7 @@ export default function HomePage() {
           Picksmart Stores
         </h1>
         <p className="text-xl text-gray-600">
-          Qatar's Premier Smart Shopping Platform - MVP
+          Qatar&apos;s Premier Smart Shopping Platform - MVP
         </p>
       </header>
 
