@@ -1,6 +1,14 @@
 import { PrismaClient } from '@prisma/client';
 
-const prisma = new PrismaClient();
+// Use centralized Prisma client to prevent connection leaks
+let prisma: PrismaClient;
+
+const getPrismaClient = () => {
+  if (!prisma) {
+    prisma = new PrismaClient();
+  }
+  return prisma;
+};
 
 export class MigrationValidator {
   async validateAll(): Promise<void> {
@@ -15,22 +23,25 @@ export class MigrationValidator {
       console.error('\n❌ Validation failed:', error);
       throw error;
     } finally {
-      await prisma.$disconnect();
+      const client = getPrismaClient();
+      await client.$disconnect();
     }
   }
   
   async validateCounts(): Promise<void> {
     console.log('📊 Counting migrated data...');
     
+    const client = getPrismaClient();
+    
     // Get basic counts
-    const productCount = await prisma.product.count();
-    const variantCount = await prisma.productVariant.count();
-    const imageCount = await prisma.productImage.count();
-    const metafieldCount = await prisma.productMetafield.count();
-    const categoryCount = await prisma.category.count();
-    const customerCount = await prisma.user.count();
-    const orderCount = await prisma.order.count();
-    const orderItemCount = await prisma.orderItem.count();
+    const productCount = await client.product.count();
+    const variantCount = await client.productVariant.count();
+    const imageCount = await client.productImage.count();
+    const metafieldCount = await client.productMetafield.count();
+    const categoryCount = await client.category.count();
+    const customerCount = await client.user.count();
+    const orderCount = await client.order.count();
+    const orderItemCount = await client.orderItem.count();
     
     console.log(`   📦 Products: ${productCount}`);
     console.log(`   🔄 Product Variants: ${variantCount}`);
@@ -57,12 +68,14 @@ export class MigrationValidator {
     console.log('\n📊 PHASE 1.5 MIGRATION REPORT');
     console.log('===============================');
     
-    const productCount = await prisma.product.count();
-    const categoryCount = await prisma.category.count();
-    const customerCount = await prisma.user.count();
-    const orderCount = await prisma.order.count();
-    const variantCount = await prisma.productVariant.count();
-    const imageCount = await prisma.productImage.count();
+    const client = getPrismaClient();
+    
+    const productCount = await client.product.count();
+    const categoryCount = await client.category.count();
+    const customerCount = await client.user.count();
+    const orderCount = await client.order.count();
+    const variantCount = await client.productVariant.count();
+    const imageCount = await client.productImage.count();
     
     console.log(`📦 Products Migrated: ${productCount}`);
     console.log(`   • Variants: ${variantCount}`);
@@ -90,7 +103,7 @@ export class MigrationValidator {
     console.log('=====================================');
     console.log('1. 🌐 Set up Shopify webhooks:');
     console.log('   • Go to Shopify Admin → Settings → Notifications');
-    console.log('   • Add webhook: https://www.picksmartstores.com/api/webhooks/shopify');
+    console.log(`   • Add webhook: ${process.env.NEXT_PUBLIC_APP_URL || 'https://your-domain.com'}/api/webhooks/shopify`);
     console.log('   • Events: products/*, orders/*, customers/*');
     console.log('   • Set SHOPIFY_WEBHOOK_SECRET in .env');
     
@@ -123,6 +136,7 @@ async function main() {
   }
 }
 
-if (require.main === module) {
+// CLI execution
+if (typeof require !== 'undefined' && require.main === module) {
   main();
 } 

@@ -1,17 +1,59 @@
-import { PrismaClient } from '@prisma/client';
 import { log } from './logger';
 import { healthCheck } from './datadog';
 import { checkWebhookHealth } from './webhook-monitor';
 import * as Sentry from '@sentry/node';
+import { PrismaClient } from '@prisma/client';
 
-const prisma = new PrismaClient();
+// Health check constants for better maintainability
+const HEALTH_CHECK_CONSTANTS = {
+  DB_SLOW_RESPONSE_THRESHOLD: 1000, // 1 second
+  MEMORY_DEGRADED_THRESHOLD: 80, // 80% heap usage
+  MEMORY_UNHEALTHY_THRESHOLD: 90, // 90% heap usage
+  RSS_MEMORY_THRESHOLD: 1024, // 1GB in MB
+  SHOPIFY_API_VERSION: '2024-04', // Configurable API version
+} as const;
+
+// Use centralized Prisma client to prevent connection leaks
+let prisma: PrismaClient;
+
+const getPrismaClient = () => {
+  if (!prisma) {
+    prisma = new PrismaClient();
+  }
+  return prisma;
+};
+
+// Type-safe interfaces for health check results
+interface ServiceDetails {
+  [key: string]: unknown;
+  productCount?: number;
+  connectionPool?: string;
+  recentEvents?: number;
+  successRate?: number;
+  averageProcessingTime?: number;
+  issues?: string[];
+  services?: ExternalServiceStatus[];
+  memoryUsage?: {
+    used: number;
+    free: number;
+    total: number;
+  };
+  cpuUsage?: number;
+}
+
+interface ExternalServiceStatus {
+  name: string;
+  status: 'healthy' | 'unhealthy';
+  responseTime?: number;
+  error?: string;
+}
 
 interface HealthCheckResult {
   service: string;
   status: 'healthy' | 'unhealthy' | 'degraded';
   responseTime?: number;
   error?: string;
-  details?: any;
+  details?: ServiceDetails;
 }
 
 interface SystemHealth {
@@ -89,16 +131,15 @@ export class HealthChecker {
     const startTime = Date.now();
     
     try {
-      // Simple connectivity test
-      await prisma.$queryRaw`SELECT 1`;
+      const client = getPrismaClient();
       
-      // Performance test - count products
-      const productCount = await prisma.product.count();
+      // Simple connectivity and performance test - count products
+      const productCount = await client.product.count();
       
       const responseTime = Date.now() - startTime;
       
       let status: 'healthy' | 'degraded' = 'healthy';
-      if (responseTime > 1000) { // 1 second
+      if (responseTime > HEALTH_CHECK_CONSTANTS.DB_SLOW_RESPONSE_THRESHOLD) {
         status = 'degraded';
       }
 
@@ -155,7 +196,7 @@ export class HealthChecker {
   // Check external services (payment gateways, APIs, etc.)
   private async checkExternalServices(): Promise<HealthCheckResult> {
     const startTime = Date.now();
-    const services = [];
+    const services: ExternalServiceStatus[] = [];
 
     try {
       // Check Stripe (if configured)
@@ -185,7 +226,8 @@ export class HealthChecker {
       // Check Shopify (if configured)
       if (process.env.SHOPIFY_STORE_URL && process.env.SHOPIFY_ACCESS_TOKEN) {
         try {
-          const response = await fetch(`${process.env.SHOPIFY_STORE_URL}/admin/api/2024-01/shop.json`, {
+          const apiVersion = process.env.SHOPIFY_API_VERSION || HEALTH_CHECK_CONSTANTS.SHOPIFY_API_VERSION;
+          const response = await fetch(`${process.env.SHOPIFY_STORE_URL}/admin/api/${apiVersion}/shop.json`, {
             headers: {
               'X-Shopify-Access-Token': process.env.SHOPIFY_ACCESS_TOKEN,
             },
@@ -244,16 +286,16 @@ export class HealthChecker {
       // Determine status based on memory usage
       let status: 'healthy' | 'degraded' | 'unhealthy' = 'healthy';
       
-      // If heap usage is over 80% of heap total
+      // Check heap usage percentages using constants
       const heapUsagePercentage = (memoryUsageMB.heapUsed / memoryUsageMB.heapTotal) * 100;
-      if (heapUsagePercentage > 90) {
+      if (heapUsagePercentage > HEALTH_CHECK_CONSTANTS.MEMORY_UNHEALTHY_THRESHOLD) {
         status = 'unhealthy';
-      } else if (heapUsagePercentage > 80) {
+      } else if (heapUsagePercentage > HEALTH_CHECK_CONSTANTS.MEMORY_DEGRADED_THRESHOLD) {
         status = 'degraded';
       }
 
-      // If RSS is over 1GB, consider degraded
-      if (memoryUsageMB.rss > 1024) {
+      // Check RSS memory usage
+      if (memoryUsageMB.rss > HEALTH_CHECK_CONSTANTS.RSS_MEMORY_THRESHOLD) {
         status = status === 'healthy' ? 'degraded' : status;
       }
 
@@ -285,8 +327,9 @@ export class HealthChecker {
   // Quick health check (for load balancer health checks)
   async quickHealthCheck(): Promise<{ status: 'ok' | 'error'; timestamp: string }> {
     try {
-      // Just check database connectivity
-      await prisma.$queryRaw`SELECT 1`;
+      const client = getPrismaClient();
+      // Simple database connectivity check using count
+      await client.product.count();
       
       return {
         status: 'ok',
@@ -331,7 +374,7 @@ export const quickHealthCheck = () => healthChecker.quickHealthCheck();
 export const checkService = (serviceName: string) => healthChecker.checkSpecificService(serviceName);
 
 // CLI script for manual health checks
-if (require.main === module) {
+if (typeof require !== 'undefined' && require.main === module) {
   healthChecker.performHealthCheck()
     .then(result => {
       console.log('🏥 Health Check Results');

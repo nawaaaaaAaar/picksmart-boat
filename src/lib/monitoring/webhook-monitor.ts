@@ -1,12 +1,28 @@
-import { PrismaClient } from '@prisma/client';
 import { log } from './logger';
 import { metrics } from './datadog';
 import * as Sentry from '@sentry/node';
 import cron from 'node-cron';
+import { PrismaClient } from '@prisma/client';
 
-const prisma = new PrismaClient();
+// Use centralized Prisma client instance
+let prisma: PrismaClient;
 
-// Webhook monitoring interface
+const getPrismaClient = () => {
+  if (!prisma) {
+    prisma = new PrismaClient();
+  }
+  return prisma;
+};
+
+// Webhook monitoring interfaces
+interface WebhookData {
+  [key: string]: unknown;
+  id?: string | number;
+  handle?: string;
+  title?: string;
+  email?: string;
+}
+
 interface WebhookEvent {
   id: string;
   type: string;
@@ -15,7 +31,7 @@ interface WebhookEvent {
   attempts: number;
   lastAttempt: Date;
   error?: string;
-  data: any;
+  data: WebhookData;
   processingTime?: number;
 }
 
@@ -60,7 +76,7 @@ export class WebhookMonitor {
   // Record webhook event
   recordWebhookEvent(
     topic: string,
-    data: any,
+    data: WebhookData,
     status: 'success' | 'failed' | 'retry',
     processingTime?: number,
     error?: string,
@@ -81,9 +97,9 @@ export class WebhookMonitor {
     };
 
     // Update existing event if retrying
-    if (recentWebhooks.has(id)) {
-      const existing = recentWebhooks.get(id)!;
-      event.attempts = existing.attempts + 1;
+    const existingEvent = recentWebhooks.get(id);
+    if (existingEvent) {
+      event.attempts = existingEvent.attempts + 1;
     }
 
     recentWebhooks.set(id, event);
@@ -109,10 +125,8 @@ export class WebhookMonitor {
       metrics.webhook.error(topic, error || 'unknown');
     }
 
-    // Record in database for persistence
-    this.persistWebhookEvent(event).catch(err => {
-      log.error('Failed to persist webhook event', { error: err.message });
-    });
+    // Note: Database persistence is optional and can be added via custom implementation
+    // For now, we use in-memory storage with cleanup
   }
 
   // Handle webhook failures
@@ -127,7 +141,9 @@ export class WebhookMonitor {
       });
     }
 
-    const failure = webhookFailures.get(topic)!;
+    const failure = webhookFailures.get(topic);
+    if (!failure) return;
+    
     failure.count++;
     failure.lastFailure = new Date();
     failure.errors.push(error);
@@ -204,46 +220,38 @@ export class WebhookMonitor {
     };
   }
 
-  // Persist webhook event to database
-  private async persistWebhookEvent(event: WebhookEvent): Promise<void> {
-    try {
-      // Create a webhook log table if it doesn't exist
-      // This would need to be added to your Prisma schema
-      await prisma.$executeRaw`
-        INSERT INTO webhook_logs (id, topic, status, attempts, data, processing_time, error, created_at)
-        VALUES (${event.id}, ${event.topic}, ${event.status}, ${event.attempts}, 
-                ${JSON.stringify(event.data)}, ${event.processingTime || null}, 
-                ${event.error || null}, ${event.lastAttempt})
-        ON DUPLICATE KEY UPDATE
-        status = VALUES(status),
-        attempts = VALUES(attempts),
-        processing_time = VALUES(processing_time),
-        error = VALUES(error),
-        updated_at = NOW()
-      `;
-    } catch (error) {
-      // Silently fail if table doesn't exist - it's optional
-      log.debug('Could not persist webhook event - table may not exist', { error });
-    }
-  }
+  // Note: Database persistence can be implemented later if needed
+  // For now, we use efficient in-memory storage with automatic cleanup
 
-  // Start monitoring processes
+  // Start monitoring processes with error handling
   private startMonitoring(): void {
     log.info('Starting webhook monitoring', { component: 'webhook-monitor' });
 
     // Clean up old events every hour
     cron.schedule('0 * * * *', () => {
-      this.cleanupOldEvents();
+      try {
+        this.cleanupOldEvents();
+      } catch (error) {
+        log.error('Failed to cleanup old webhook events', { error });
+      }
     });
 
     // Generate monitoring report every 15 minutes
     cron.schedule('*/15 * * * *', () => {
-      this.generateMonitoringReport();
+      try {
+        this.generateMonitoringReport();
+      } catch (error) {
+        log.error('Failed to generate monitoring report', { error });
+      }
     });
 
     // Reset failure counters daily
     cron.schedule('0 0 * * *', () => {
-      this.resetFailureCounters();
+      try {
+        this.resetFailureCounters();
+      } catch (error) {
+        log.error('Failed to reset failure counters', { error });
+      }
     });
   }
 
@@ -336,12 +344,12 @@ export const webhookMonitor = WebhookMonitor.getInstance();
 // Export utility functions
 export const recordWebhook = (
   topic: string,
-  data: any,
+  data: WebhookData,
   status: 'success' | 'failed' | 'retry',
   processingTime?: number,
   error?: string,
   eventId?: string
-) => {
+): void => {
   webhookMonitor.recordWebhookEvent(topic, data, status, processingTime, error, eventId);
 };
 

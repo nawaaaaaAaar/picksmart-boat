@@ -50,7 +50,7 @@ DD_TRACE_ENABLED="true"
 
 # Webhook Monitoring
 WEBHOOK_MONITORING_ENABLED="true"
-WEBHOOK_ALERT_EMAIL="admin@picksmart.com"
+WEBHOOK_ALERT_EMAIL="picksmartstores@gmail.com.com"
 WEBHOOK_FAILURE_THRESHOLD="5"
 WEBHOOK_RETRY_ATTEMPTS="3"
 ```

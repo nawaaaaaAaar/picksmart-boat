@@ -52,20 +52,26 @@ const logger = winston.createLogger({
       ),
     }),
     
-    // File transport for errors
-    new winston.transports.File({
-      filename: 'logs/error.log',
-      level: 'error',
-      maxsize: 5242880, // 5MB
-      maxFiles: 5,
-    }),
-    
-    // File transport for all logs
-    new winston.transports.File({
-      filename: 'logs/combined.log',
-      maxsize: 5242880, // 5MB
-      maxFiles: 5,
-    }),
+    // File transport for errors (only if logs directory exists)
+    ...(fs.existsSync(logsDir) ? [
+      new winston.transports.File({
+        filename: path.join(logsDir, 'error.log'),
+        level: 'error',
+        maxsize: 5242880, // 5MB
+        maxFiles: 5,
+        handleExceptions: true,
+        handleRejections: true,
+      }),
+      
+      // File transport for all logs
+      new winston.transports.File({
+        filename: path.join(logsDir, 'combined.log'),
+        maxsize: 5242880, // 5MB
+        maxFiles: 5,
+        handleExceptions: true,
+        handleRejections: true,
+      }),
+    ] : []),
   ],
 });
 
@@ -172,13 +178,23 @@ export const log = {
   },
 };
 
-// Create logs directory if it doesn't exist
+// Create logs directory if it doesn't exist (with proper error handling)
 import fs from 'fs';
 import path from 'path';
 
-const logsDir = path.join(process.cwd(), 'logs');
-if (!fs.existsSync(logsDir)) {
-  fs.mkdirSync(logsDir, { recursive: true });
-}
+const createLogsDirectory = () => {
+  const logsDir = path.join(process.cwd(), 'logs');
+  try {
+    if (!fs.existsSync(logsDir)) {
+      fs.mkdirSync(logsDir, { recursive: true, mode: 0o755 }); // Secure permissions
+    }
+  } catch (error) {
+    console.warn('Failed to create logs directory:', error);
+    // Continue without file logging if directory creation fails
+  }
+  return logsDir;
+};
+
+const logsDir = createLogsDirectory();
 
 export default logger; 
